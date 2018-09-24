@@ -1,0 +1,159 @@
+---
+title: "Practical Machine Learning - Predictions Assignment"
+author: "Xiaoran Guo"
+date: "September 23, 2018"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## General Assignment Information
+
+### Background
+
+Using devices such as Jawbone Up, Nike FuelBand, and Fitbit it is now possible to collect a large amount of data about personal activity relatively inexpensively. These type of devices are part of the quantified self movement – a group of enthusiasts who take measurements about themselves regularly to improve their health, to find patterns in their behavior, or because they are tech geeks. One thing that people regularly do is quantify how much of a particular activity they do, but they rarely quantify how well they do it. In this project, your goal will be to use data from accelerometers on the belt, forearm, arm, and dumbell of 6 participants. They were asked to perform barbell lifts correctly and incorrectly in 5 different ways. More information is available from the website here: http://web.archive.org/web/20161224072740/http:/groupware.les.inf.puc-rio.br/har (see the section on the Weight Lifting Exercise Dataset).
+
+### Data
+
+The training data for this project are available here:
+
+https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv
+
+The test data are available here:
+
+https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv
+
+The data for this project come from this source: http://web.archive.org/web/20161224072740/http:/groupware.les.inf.puc-rio.br/har. If you use the document you create for this class for any purpose please cite them as they have been very generous in allowing their data to be used for this kind of assignment.
+
+### Full citation
+
+Velloso, E.; Bulling, A.; Gellersen, H.; Ugulino, W.; Fuks, H. Qualitative Activity Recognition of Weight Lifting Exercises. Proceedings of 4th International Conference in Cooperation with SIGCHI (Augmented Human '13) . Stuttgart, Germany: ACM SIGCHI, 2013. 
+
+## The Assignment
+
+### Loading the Data
+
+```{r}
+library(caret)
+library(randomForest)
+library(e1071)
+library(party)
+train_raw <- read.csv(url("https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv"))
+test_raw <- read.csv(url("https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv"))
+```
+
+### Cleaning the Data (removing NAs and empty columns)
+
+```{r R.options=list(max.print=20)}
+colSums(is.na(train_raw))
+colSums(is.na(test_raw))
+```
+
+Many columns contain no NAs. Other columns consistently have 19216 of 19622 entries as NAs. These columns should be excluded from the analysis as the vast majority of them are blank and the testing data set has the same columns empty in 20 of 20 entries. In addition, columns 1 through 7 in both training and testing contained participant identification information or metadata. These are also removed.
+
+```{r}
+train_raw[train_raw==""] <- NA #set blank entries as NA
+train <- train_raw[, apply(train_raw, 2, function(x) !any(is.na(x)))] #remove any columns with NAs
+train <- train[, -c(1:7)] #remove first 7 columns
+
+test <- test_raw[, apply(test_raw, 2, function(x) !any(is.na(x)))]  #remove any columns with NAs
+test <- test[, -c(1:7)] #remove first 7 columns
+```
+
+### Prediction Goal
+
+From the original paper:
+
+"Six young health participants were asked to perform one set of 10 repetitions of the Unilateral Dumbbell Biceps Curl in five different fashions:
+
+* exactly according to the specification (Class A)
+* throwing the elbows to the front (Class B)
+* lifting the dumbbell only halfway (Class C)
+* lowering the dumbbell only halfway (Class D) and
+* throwing the hips to the front (Class E)"
+
+### Cross-Validation
+
+A 0.75/0.25 split will be used for training data to explore three models.
+
+```{r}
+set.seed(10000)
+inTrain <- createDataPartition(y=train$classe, p=0.75,list=FALSE)
+training <- train[inTrain,]
+testing <- train[-inTrain,]
+```
+
+### The Models
+
+#### Predicting with Trees Model
+
+```{r}
+# Training
+modelTrees <- train(classe~.,method="rpart",data=training)
+confusionMatrix(training$classe,predict(modelTrees))
+
+# OOS Validating
+Trees <- predict(modelTrees,newdata=testing)
+confusionMatrix(testing$classe,Trees)
+```
+
+The Predict with Trees model shows an in-sample prediction accuracy of 49.6%, and an out-of-sample prediction accuracy of 49.5%. This is not very good and is no better than a random guess.
+
+#### Support Vector Machine Model
+
+```{r}
+# Training
+modelSVM <- svm(training[,-53],training$classe) #Support Vector Machine model
+confusionMatrix(training$classe,predict(modelSVM))
+
+# OOS Validating
+SVM <- predict(modelSVM,testing[,-53])
+confusionMatrix(testing$classe,SVM)
+```
+
+The SVM model shows an in-sample prediction accuracy of 95.0%, and an out-of-sample accuracy of 94.3%. This is much better and appears to be fairly robust.
+
+#### Random Forest Model
+
+```{r}
+# Training
+modelRF <- randomForest(classe ~ ., data=training) #Random Forest model
+confusionMatrix(training$classe,predict(modelRF))
+
+# OOS Validating
+RF <- predict(modelRF, testing, type="class")
+confusionMatrix(testing$classe,RF)
+```
+
+The Random Forest model shows an in-sample prediction accuracy of 99.5% and an out-of-sample accuracy of 99.6%. This is the best performing model so far, for both in-sample and out-of-sample predictions.
+
+#### Visualizing the Error Rate
+
+```{r}
+plot(modelRF)
+```
+
+The black line represents the out-of-sample error rate. The other colours represent categories A through E.
+
+#### Visualizing a Single Tree
+
+```{r}
+cf <- cforest(classe~.,data=training, controls=cforest_control(maxdepth=3))
+pt <- prettytree(cf@ensemble[[1]], names(cf@data@get("input")))
+nt <- new("BinaryTree") 
+nt@tree <- pt 
+nt@data <- cf@data 
+nt@responses <- cf@responses 
+plot(nt)
+```
+
+The tree depth in this case was limited to 3 to avoid cluttering.
+
+## Answering the Testing Data Classification Question
+
+```{r}
+answersRF <- predict(modelRF,test,type="class")
+answersRF
+```
